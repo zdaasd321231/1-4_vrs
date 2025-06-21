@@ -740,6 +740,13 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
+@app.on_event("startup")
+async def startup_event():
+    """Запуск фоновых задач при старте приложения"""
+    # Запуск фоновой задачи проверки статусов
+    asyncio.create_task(update_connection_status_check())
+    logger.info("VNC Management System started with background status checking")
+
 @app.on_event("shutdown")
 async def shutdown_db_client():
     client.close()
