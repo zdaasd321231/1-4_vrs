@@ -39,6 +39,7 @@ api_router = APIRouter(prefix="/api")
 # VNC Configuration
 VNC_PASSWORD = "vnc123pass"  # Статичный пароль для всех подключений
 VNC_PORT = 5900
+DEMO_MODE = True  # Режим демонстрации для университета
 
 # ================== MODELS ==================
 
