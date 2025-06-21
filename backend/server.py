@@ -327,19 +327,38 @@ async def update_connection_status(connection_id: str, status: str):
     
     return {"message": "Status updated successfully"}
 
-@api_router.delete("/connections/{connection_id}")
-async def delete_connection(connection_id: str):
-    """Удалить соединение"""
-    result = await db.vnc_connections.delete_one({"id": connection_id})
-    if result.deleted_count == 0:
+@api_router.post("/connections/{connection_id}/simulate-active")
+async def simulate_active_connection(connection_id: str):
+    """Симулировать активное соединение для демонстрации"""
+    connection = await db.vnc_connections.find_one({"id": connection_id})
+    if not connection:
         raise HTTPException(status_code=404, detail="Connection not found")
     
-    # Удалить связанные ключи установки
-    await db.installation_keys.delete_many({"connection_id": connection_id})
+    # Установить случайный IP адрес если его нет
+    if not connection.get("ip_address"):
+        import random
+        ip_address = f"192.168.1.{random.randint(100, 200)}"
+        await db.vnc_connections.update_one(
+            {"id": connection_id},
+            {"$set": {"ip_address": ip_address}}
+        )
+    else:
+        ip_address = connection["ip_address"]
     
-    await log_activity(connection_id, "connection_deleted", "Connection removed from system")
+    # Активировать соединение
+    update_data = {
+        "status": "active",
+        "last_seen": datetime.utcnow()
+    }
     
-    return {"message": "Connection deleted successfully"}
+    result = await db.vnc_connections.update_one(
+        {"id": connection_id},
+        {"$set": update_data}
+    )
+    
+    await log_activity(connection_id, "demo_activation", f"Соединение активировано для демонстрации (IP: {ip_address})")
+    
+    return {"message": "Connection activated for demo", "ip_address": ip_address}
 
 # Installation Scripts
 @api_router.get("/generate-installer/{connection_id}")
