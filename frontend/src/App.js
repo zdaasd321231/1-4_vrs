@@ -71,6 +71,15 @@ const ConnectionCard = ({ connection, onGenerateInstaller, onConnect, onDelete, 
           📥 Скачать установщик
         </button>
         
+        {connection.status === 'inactive' && (
+          <button
+            onClick={() => onSimulateActive(connection.id)}
+            className="flex-1 bg-orange-600 text-white px-3 py-2 rounded-md text-sm font-medium hover:bg-orange-700 transition-colors"
+          >
+            🔄 Активировать (Тест)
+          </button>
+        )}
+        
         {connection.status === 'active' && (
           <>
             <button
