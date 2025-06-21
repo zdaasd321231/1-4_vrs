@@ -106,6 +106,8 @@ def generate_installation_key():
 
 def generate_powershell_script(installation_key: str):
     """Генерирует PowerShell скрипт для установки TightVNC"""
+    server_url = os.environ.get('REACT_APP_BACKEND_URL', 'localhost:8001').replace('https://', '').replace('http://', '')
+    
     script_content = f'''# VNC Auto-Installation Script
 # Generated for University IT Support
 # Installation Key: {installation_key}
@@ -113,80 +115,229 @@ def generate_powershell_script(installation_key: str):
 # Configuration
 $VNC_PASSWORD = "{VNC_PASSWORD}"
 $INSTALLATION_KEY = "{installation_key}"
-$SERVER_URL = "{os.environ.get('SERVER_URL', 'localhost:8001')}"
+$SERVER_URL = "{server_url}"
 
-Write-Host "Starting VNC Installation..." -ForegroundColor Green
+Write-Host "=== VNC АВТОУСТАНОВКА ===" -ForegroundColor Green
+Write-Host "Установка и настройка TightVNC для удаленного управления" -ForegroundColor Yellow
 
-# Download TightVNC
-$TightVNC_URL = "https://www.tightvnc.com/download/2.8.59/tightvnc-2.8.59-gpl-setup-64bit.msi"
-$TempPath = "$env:TEMP\\tightvnc-setup.msi"
-
-try {{
-    Write-Host "Downloading TightVNC..." -ForegroundColor Yellow
-    Invoke-WebRequest -Uri $TightVNC_URL -OutFile $TempPath -UseBasicParsing
-    
-    # Silent installation
-    Write-Host "Installing TightVNC..." -ForegroundColor Yellow
-    Start-Process msiexec.exe -ArgumentList "/i `"$TempPath`" /quiet /norestart SET_USEVNCAUTHENTICATION=1 SET_PASSWORD=$VNC_PASSWORD SET_USECONTROLAUTHENTICATION=1 SET_CONTROLPASSWORD=$VNC_PASSWORD" -Wait
-    
-    # Configure VNC Server
-    Write-Host "Configuring VNC Server..." -ForegroundColor Yellow
-    
-    # Set password in registry
-    $RegPath = "HKLM:\\SOFTWARE\\TightVNC\\Server"
-    if (Test-Path $RegPath) {{
-        Set-ItemProperty -Path $RegPath -Name "Password" -Value (ConvertTo-SecureString $VNC_PASSWORD -AsPlainText -Force | ConvertFrom-SecureString)
-    }}
-    
-    # Start VNC Service
-    Write-Host "Starting VNC Service..." -ForegroundColor Yellow
-    Start-Service -Name "tvnserver"
-    Set-Service -Name "tvnserver" -StartupType Automatic
-    
-    # Register with server
-    Write-Host "Registering with management server..." -ForegroundColor Yellow
-    $MachineName = $env:COMPUTERNAME
-    $IPAddress = (Get-NetIPAddress -AddressFamily IPv4 | Where-Object {{$_.PrefixOrigin -eq "Dhcp" -or $_.PrefixOrigin -eq "Manual"}} | Select-Object -First 1).IPAddress
-    
-    $RegistrationData = @{{
-        installation_key = $INSTALLATION_KEY
-        machine_name = $MachineName
-        ip_address = $IPAddress
-        status = "active"
-    }}
-    
-    $JsonData = ConvertTo-Json $RegistrationData
-    
+# Функция для установки TightVNC автоматически
+function Install-TightVNC {{
     try {{
-        Invoke-RestMethod -Uri "http://$SERVER_URL/api/register-machine" -Method POST -Body $JsonData -ContentType "application/json"
-        Write-Host "Registration successful!" -ForegroundColor Green
+        # Создаем временную директорию
+        $TempDir = "$env:TEMP\\VNCInstaller"
+        if (!(Test-Path $TempDir)) {{
+            New-Item -ItemType Directory -Path $TempDir -Force | Out-Null
+        }}
+        
+        Write-Host "Загрузка TightVNC..." -ForegroundColor Yellow
+        
+        # URL для скачивания TightVNC
+        $TightVNC_URL = "https://www.tightvnc.com/download/2.8.59/tightvnc-2.8.59-gpl-setup-64bit.msi"
+        $InstallerPath = "$TempDir\\tightvnc-setup.msi"
+        
+        # Скачиваем установщик
+        Invoke-WebRequest -Uri $TightVNC_URL -OutFile $InstallerPath -UseBasicParsing -TimeoutSec 60
+        
+        Write-Host "Установка TightVNC..." -ForegroundColor Yellow
+        
+        # Автоматическая установка с настройками
+        $Arguments = @(
+            "/i", "`"$InstallerPath`"",
+            "/quiet", "/norestart",
+            "SET_USEVNCAUTHENTICATION=1",
+            "SET_PASSWORD=$VNC_PASSWORD",
+            "SET_USECONTROLAUTHENTICATION=1", 
+            "SET_CONTROLPASSWORD=$VNC_PASSWORD",
+            "SET_RUNCONTROLINTERFACE=1",
+            "SET_REMOVEWALLPAPER=1"
+        )
+        
+        Start-Process -FilePath "msiexec.exe" -ArgumentList $Arguments -Wait -NoNewWindow
+        
+        Write-Host "Настройка VNC сервера..." -ForegroundColor Yellow
+        
+        # Настройка через реестр
+        $RegPath = "HKLM:\\SOFTWARE\\TightVNC\\Server"
+        if (Test-Path $RegPath) {{
+            # Базовые настройки VNC
+            Set-ItemProperty -Path $RegPath -Name "QueryTimeout" -Value 10 -Type DWord -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $RegPath -Name "QueryAcceptOnTimeout" -Value 0 -Type DWord -ErrorAction SilentlyContinue  
+            Set-ItemProperty -Path $RegPath -Name "LocalInputPriority" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $RegPath -Name "LocalInputPriorityTimeout" -Value 3 -Type DWord -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $RegPath -Name "BlockRemoteInput" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $RegPath -Name "BlockLocalInput" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $RegPath -Name "IpAccessControl" -Value 0 -Type DWord -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $RegPath -Name "RfbPort" -Value 5900 -Type DWord -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $RegPath -Name "HttpPort" -Value 5800 -Type DWord -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $RegPath -Name "AcceptRfbConnections" -Value 1 -Type DWord -ErrorAction SilentlyContinue
+            Set-ItemProperty -Path $RegPath -Name "AcceptHttpConnections" -Value 1 -Type DWord -ErrorAction SilentlyContinue
+        }}
+        
+        # Запуск и настройка службы
+        Write-Host "Запуск VNC службы..." -ForegroundColor Yellow
+        
+        # Останавливаем службу если запущена
+        Stop-Service -Name "tvnserver" -Force -ErrorAction SilentlyContinue
+        
+        # Устанавливаем автозапуск и запускаем
+        Set-Service -Name "tvnserver" -StartupType Automatic
+        Start-Service -Name "tvnserver"
+        
+        # Проверяем что служба запустилась
+        $Service = Get-Service -Name "tvnserver" -ErrorAction SilentlyContinue
+        if ($Service.Status -eq "Running") {{
+            Write-Host "✓ VNC сервер успешно запущен" -ForegroundColor Green
+        }} else {{
+            Write-Host "⚠ Служба VNC запущена, но статус неизвестен" -ForegroundColor Yellow
+        }}
+        
+        # Очистка временных файлов
+        Remove-Item -Path $TempDir -Recurse -Force -ErrorAction SilentlyContinue
+        
+        return $true
+        
     }} catch {{
-        Write-Host "Registration failed, but VNC is installed and running" -ForegroundColor Yellow
+        Write-Host "❌ Ошибка установки: $_" -ForegroundColor Red
+        return $false
     }}
-    
-    # Clean up
-    Remove-Item $TempPath -Force -ErrorAction SilentlyContinue
-    
-    Write-Host "VNC Installation completed successfully!" -ForegroundColor Green
-    Write-Host "VNC Password: $VNC_PASSWORD" -ForegroundColor Cyan
-    Write-Host "Installation Key: $INSTALLATION_KEY" -ForegroundColor Cyan
-    
-}} catch {{
-    Write-Host "Installation failed: $_" -ForegroundColor Red
+}}
+
+# Функция регистрации в системе управления
+function Register-WithServer {{
+    try {{
+        Write-Host "Регистрация в системе управления..." -ForegroundColor Yellow
+        
+        # Получаем информацию о машине
+        $MachineName = $env:COMPUTERNAME
+        $IPAddresses = @()
+        
+        # Получаем все IP адреса (исключая localhost)
+        Get-NetIPAddress -AddressFamily IPv4 | Where-Object {{
+            $_.IPAddress -ne "127.0.0.1" -and 
+            $_.PrefixOrigin -in @("Dhcp", "Manual")
+        }} | ForEach-Object {{
+            $IPAddresses += $_.IPAddress
+        }}
+        
+        $PrimaryIP = $IPAddresses[0]
+        if (-not $PrimaryIP) {{
+            $PrimaryIP = "192.168.1.100"  # Fallback IP
+        }}
+        
+        # Данные для регистрации
+        $RegistrationData = @{{
+            installation_key = $INSTALLATION_KEY
+            machine_name = $MachineName
+            ip_address = $PrimaryIP
+            status = "active"
+        }} | ConvertTo-Json
+        
+        # Отправляем регистрацию
+        $Headers = @{{ "Content-Type" = "application/json" }}
+        $RegisterUrl = "https://$SERVER_URL/api/register-machine"
+        
+        Write-Host "Отправка регистрации на: $RegisterUrl" -ForegroundColor Gray
+        
+        $Response = Invoke-RestMethod -Uri $RegisterUrl -Method POST -Body $RegistrationData -Headers $Headers -TimeoutSec 30
+        
+        Write-Host "✓ Регистрация успешна!" -ForegroundColor Green
+        Write-Host "Машина: $MachineName" -ForegroundColor Cyan  
+        Write-Host "IP адрес: $PrimaryIP" -ForegroundColor Cyan
+        Write-Host "Ключ: $INSTALLATION_KEY" -ForegroundColor Cyan
+        
+        return $true
+        
+    }} catch {{
+        Write-Host "⚠ Регистрация не удалась: $_" -ForegroundColor Yellow
+        Write-Host "VNC сервер работает, но не зарегистрирован в системе" -ForegroundColor Yellow
+        return $false
+    }}
+}}
+
+# Функция проверки подключения
+function Test-VNCConnection {{
+    try {{
+        $Socket = New-Object System.Net.Sockets.TcpClient
+        $Socket.Connect("127.0.0.1", 5900)
+        $Socket.Close()
+        return $true
+    }} catch {{
+        return $false
+    }}
+}}
+
+# ОСНОВНОЙ ПРОЦЕСС УСТАНОВКИ
+Write-Host ""
+Write-Host "Начинаем автоматическую установку..." -ForegroundColor Green
+
+# Проверяем права администратора
+if (-NOT ([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] "Administrator")) {{
+    Write-Host "❌ ОШИБКА: Требуются права администратора!" -ForegroundColor Red
+    Write-Host "Запустите PowerShell от имени администратора и повторите установку." -ForegroundColor Yellow
+    Read-Host "Нажмите Enter для выхода"
     exit 1
 }}
 
-# Hide tray icon (optional)
-$TrayRegPath = "HKLM:\\SOFTWARE\\TightVNC\\Server"
-try {{
-    Set-ItemProperty -Path $TrayRegPath -Name "ShowTrayIcon" -Value 0
-}} catch {{
-    Write-Host "Could not hide tray icon" -ForegroundColor Yellow
+# Шаг 1: Установка TightVNC
+Write-Host "📦 Шаг 1: Установка TightVNC" -ForegroundColor Blue
+if (Install-TightVNC) {{
+    Write-Host "✓ TightVNC установлен успешно" -ForegroundColor Green
+}} else {{
+    Write-Host "❌ Не удалось установить TightVNC" -ForegroundColor Red
+    Read-Host "Нажмите Enter для выхода"
+    exit 1
 }}
 
-Write-Host "Installation complete. VNC Server is now running." -ForegroundColor Green
-pause
-'''
+# Ожидание запуска службы
+Write-Host "⏳ Ожидание запуска VNC сервера..." -ForegroundColor Yellow
+Start-Sleep -Seconds 5
+
+# Проверка подключения
+if (Test-VNCConnection) {{
+    Write-Host "✓ VNC сервер доступен на порту 5900" -ForegroundColor Green
+}} else {{
+    Write-Host "⚠ VNC сервер может быть недоступен" -ForegroundColor Yellow
+}}
+
+# Шаг 2: Регистрация в системе
+Write-Host "📡 Шаг 2: Регистрация в системе управления" -ForegroundColor Blue  
+Register-WithServer | Out-Null
+
+# Настройка файервола (опционально)
+Write-Host "🔥 Шаг 3: Настройка файервола" -ForegroundColor Blue
+try {{
+    # Разрешаем VNC порт в файерволе
+    New-NetFirewallRule -DisplayName "VNC Server" -Direction Inbound -Port 5900 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
+    New-NetFirewallRule -DisplayName "VNC HTTP" -Direction Inbound -Port 5800 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue
+    Write-Host "✓ Файервол настроен" -ForegroundColor Green
+}} catch {{
+    Write-Host "⚠ Не удалось настроить файервол автоматически" -ForegroundColor Yellow
+}}
+
+# Завершение
+Write-Host ""
+Write-Host "🎉 УСТАНОВКА ЗАВЕРШЕНА!" -ForegroundColor Green
+Write-Host "========================" -ForegroundColor Green
+Write-Host "VNC Сервер: АКТИВЕН" -ForegroundColor Cyan
+Write-Host "Порт: 5900" -ForegroundColor Cyan  
+Write-Host "Пароль: $VNC_PASSWORD" -ForegroundColor Cyan
+Write-Host "Ключ установки: $INSTALLATION_KEY" -ForegroundColor Cyan
+Write-Host ""
+Write-Host "Теперь вы можете подключиться через веб-интерфейс:" -ForegroundColor Yellow
+Write-Host "https://$SERVER_URL" -ForegroundColor Blue
+Write-Host ""
+
+# Скрыть иконку в трее (опционально)
+$TrayRegPath = "HKLM:\\SOFTWARE\\TightVNC\\Server"
+try {{
+    Set-ItemProperty -Path $TrayRegPath -Name "ShowTrayIcon" -Value 0 -ErrorAction SilentlyContinue
+}} catch {{
+    # Игнорируем ошибки
+}}
+
+Write-Host "Установка завершена. Окно закроется через 10 секунд..." -ForegroundColor Yellow
+Start-Sleep -Seconds 10'''
+    
     return script_content
 
 async def log_activity(connection_id: str, action: str, details: str, ip_address: str = None):
