@@ -459,6 +459,7 @@ function App() {
                   onConnect={handleConnect}
                   onDelete={handleDeleteConnection}
                   onFileManager={handleOpenFileManager}
+                  onSimulateActive={handleSimulateActive}
                 />
               ))}
             </div>
