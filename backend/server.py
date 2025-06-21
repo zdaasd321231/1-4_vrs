@@ -840,7 +840,6 @@ async def proxy_vnc_to_websocket(vnc_reader, websocket: WebSocket):
     except Exception as e:
         logger.debug(f"VNC to WebSocket proxy ended: {e}")
 
-# VNC Screen capture (симуляция)
 @api_router.get("/vnc/{connection_id}/screenshot")
 async def get_vnc_screenshot(connection_id: str):
     """Получить скриншот VNC экрана"""
@@ -851,33 +850,25 @@ async def get_vnc_screenshot(connection_id: str):
     if connection["status"] != "active":
         raise HTTPException(status_code=400, detail="Connection is not active")
     
-    # Создаем простой тестовый "скриншот" SVG
-    svg_content = f'''<svg width="800" height="600" xmlns="http://www.w3.org/2000/svg">
-    <rect width="100%" height="100%" fill="#1e40af"/>
-    <text x="400" y="250" text-anchor="middle" fill="white" font-size="24" font-family="Arial">
-        VNC Screen: {connection['name']}
-    </text>
-    <text x="400" y="300" text-anchor="middle" fill="white" font-size="16" font-family="Arial">
-        IP: {connection['ip_address']}
-    </text>
-    <text x="400" y="330" text-anchor="middle" fill="white" font-size="14" font-family="Arial">
-        Screenshot at: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S')}
-    </text>
-    <rect x="100" y="400" width="600" height="100" fill="white" stroke="black" stroke-width="2"/>
-    <text x="400" y="440" text-anchor="middle" fill="black" font-size="16" font-family="Arial">
-        Simulated Desktop Environment
-    </text>
-    <text x="400" y="460" text-anchor="middle" fill="black" font-size="12" font-family="Arial">
-        This is a mock VNC screen for demonstration
-    </text>
-</svg>'''
+    # Простой текстовый индикатор вместо SVG для лучшей совместимости
+    text_content = f'''VNC Connection Ready
+Computer: {connection['name']}
+IP: {connection['ip_address']}
+Port: {connection.get('vnc_port', 5900)}
+Status: Active
+
+Use VNC Viewer to connect.
+Password: {VNC_PASSWORD}
+
+Ready for connection...'''
     
-    await log_activity(connection_id, "vnc_screenshot", "Screenshot captured")
+    await log_activity(connection_id, "vnc_screenshot", "Screenshot requested")
     
-    return StreamingResponse(
-        io.StringIO(svg_content),
-        media_type="image/svg+xml"
-    )
+    return {"status": "ready", "text": text_content, "connection_info": {
+        "ip": connection['ip_address'],
+        "port": connection.get('vnc_port', 5900),
+        "password": VNC_PASSWORD
+    }}
 
 # WebSocket для файлового менеджера
 @app.websocket("/ws/files/{connection_id}")
