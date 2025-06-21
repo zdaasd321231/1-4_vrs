@@ -316,6 +316,16 @@ function App() {
     }
   };
 
+  const handleSimulateActive = async (connectionId) => {
+    try {
+      await axios.post(`${API}/connections/${connectionId}/simulate-active`);
+      loadData(); // Обновить данные
+    } catch (err) {
+      console.error('Ошибка активации соединения:', err);
+      alert('Ошибка активации соединения');
+    }
+  };
+
   const handleDeleteConnection = async (connectionId) => {
     if (!window.confirm('Вы уверены, что хотите удалить это соединение?')) {
       return;
