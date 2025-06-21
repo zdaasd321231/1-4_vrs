@@ -621,50 +621,78 @@ async def get_file_transfers(connection_id: str, limit: int = 50):
 
 # WebSocket для VNC прокси
 websocket_connections = {}
+vnc_proxies = {}
 
-@app.websocket("/ws/vnc/{connection_id}")
-async def vnc_websocket(websocket: WebSocket, connection_id: str):
-    """WebSocket прокси для VNC соединения"""
+@app.websocket("/websockify")
+async def websockify_vnc_proxy(websocket: WebSocket, token: str):
+    """WebSocket прокси для VNC соединения через websockify протокол"""
     await websocket.accept()
     
-    connection = await db.vnc_connections.find_one({"id": connection_id})
+    connection = await db.vnc_connections.find_one({"id": token})
     if not connection:
-        await websocket.close(code=4004, reason="Connection not found")
+        await websocket.close(code=1008, reason="Connection not found")
         return
     
-    if connection["status"] != "active":
-        await websocket.close(code=4003, reason="Connection not active") 
+    if connection["status"] != "active" or not connection.get("ip_address"):
+        await websocket.close(code=1008, reason="Connection not active or no IP")
         return
+    
+    vnc_host = connection["ip_address"]
+    vnc_port = connection.get("vnc_port", 5900)
     
     # Добавить соединение в активные
-    websocket_connections[connection_id] = websocket
+    websocket_connections[token] = websocket
     
     try:
-        await log_activity(connection_id, "vnc_websocket_connect", f"WebSocket VNC session started")
+        await log_activity(token, "vnc_websocket_connect", f"WebSocket VNC session started to {vnc_host}:{vnc_port}")
         
-        # Симуляция VNC данных (в реальной системе здесь будет прокси к VNC серверу)
-        while True:
-            try:
-                # Получить данные от клиента
-                data = await websocket.receive_text()
-                
-                # В реальной реализации здесь будет:
-                # 1. Передача данных на VNC сервер
-                # 2. Получение ответа от VNC сервера  
-                # 3. Отправка ответа обратно клиенту
-                
-                # Пока что отправляем подтверждение
-                await websocket.send_text(f"VNC_RESPONSE: {data}")
-                
-            except WebSocketDisconnect:
-                break
-                
+        # Создать TCP соединение к VNC серверу
+        try:
+            vnc_reader, vnc_writer = await asyncio.open_connection(vnc_host, vnc_port)
+            vnc_proxies[token] = (vnc_reader, vnc_writer)
+            
+            # Запустить прокси между WebSocket и VNC TCP
+            await asyncio.gather(
+                proxy_websocket_to_vnc(websocket, vnc_writer),
+                proxy_vnc_to_websocket(vnc_reader, websocket),
+                return_exceptions=True
+            )
+            
+        except (ConnectionRefusedError, OSError) as e:
+            logger.error(f"Failed to connect to VNC server {vnc_host}:{vnc_port}: {e}")
+            await websocket.close(code=1011, reason=f"VNC server unavailable: {e}")
+            
     except Exception as e:
-        logger.error(f"WebSocket error: {e}")
+        logger.error(f"WebSocket VNC proxy error: {e}")
     finally:
-        # Удалить соединение из активных
-        websocket_connections.pop(connection_id, None)
-        await log_activity(connection_id, "vnc_websocket_disconnect", "WebSocket VNC session ended")
+        # Очистка соединений
+        websocket_connections.pop(token, None)
+        if token in vnc_proxies:
+            _, vnc_writer = vnc_proxies.pop(token)
+            vnc_writer.close()
+            await vnc_writer.wait_closed()
+        await log_activity(token, "vnc_websocket_disconnect", "WebSocket VNC session ended")
+
+async def proxy_websocket_to_vnc(websocket: WebSocket, vnc_writer):
+    """Прокси данных от WebSocket к VNC серверу"""
+    try:
+        while True:
+            data = await websocket.receive_bytes()
+            vnc_writer.write(data)
+            await vnc_writer.drain()
+    except Exception as e:
+        logger.debug(f"WebSocket to VNC proxy ended: {e}")
+
+async def proxy_vnc_to_websocket(vnc_reader, websocket: WebSocket):
+    """Прокси данных от VNC сервера к WebSocket"""
+    try:
+        while True:
+            data = await vnc_reader.read(8192)
+            if not data:
+                break
+            await websocket.send_bytes(data)
+    except Exception as e:
+        logger.debug(f"VNC to WebSocket proxy ended: {e}")
 
 # VNC Screen capture (симуляция)
 @api_router.get("/vnc/{connection_id}/screenshot")
