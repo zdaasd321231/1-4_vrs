@@ -164,43 +164,72 @@ class VNCManagementSystemTest(unittest.TestCase):
         if not self.connection_id:
             self.skipTest("No test connection available")
         
-        # First, register a machine with our test connection
-        registration_data = {
-            "installation_key": self.installation_key,
-            "machine_name": "Test Machine",
-            "ip_address": "127.0.0.1",  # Use localhost for testing
-            "status": "inactive"  # Start as inactive
+        # Create a new connection specifically for this test to avoid conflicts
+        connection_data = {
+            "name": f"VNC Test Connection {datetime.now().strftime('%Y%m%d%H%M%S')}",
+            "location": "Test Location",
+            "country": "Russia",
+            "city": "Moscow"
         }
         
-        async with self.session.post(f"{API_URL}/register-machine", json=registration_data) as response:
+        # Create a new connection
+        async with self.session.post(f"{API_URL}/connections", json=connection_data) as response:
             self.assertEqual(response.status, 200)
+            test_data = await response.json()
+            test_connection_id = test_data.get("id")
+            test_installation_key = test_data.get("installation_key")
             
-            # Start a mock VNC server on port 5900
-            server_socket = None
-            try:
-                server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-                server_socket.bind(('127.0.0.1', 5900))
-                server_socket.listen(1)
-                logger.info("Started mock VNC server on port 5900")
+            # Register the machine with our new test connection
+            registration_data = {
+                "installation_key": test_installation_key,
+                "machine_name": "VNC Test Machine",
+                "ip_address": "127.0.0.1",  # Use localhost for testing
+                "status": "inactive"  # Start as inactive
+            }
+            
+            async with self.session.post(f"{API_URL}/register-machine", json=registration_data) as reg_response:
+                self.assertEqual(reg_response.status, 200)
+                logger.info("Registered test machine with IP 127.0.0.1")
                 
-                # Wait for the background task to detect the connection (runs every 30 seconds)
-                # For testing, we'll wait a bit and then check if the status was updated
-                await asyncio.sleep(35)  # Wait slightly longer than the 30-second check interval
+                # Start a mock VNC server on port 5900
+                server_socket = None
+                try:
+                    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+                    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                    server_socket.bind(('127.0.0.1', 5900))
+                    server_socket.listen(1)
+                    logger.info("Started mock VNC server on port 5900")
+                    
+                    # Manually update the status to test the check_vnc_connection function
+                    async with self.session.put(f"{API_URL}/connections/{test_connection_id}/status?status=inactive") as update_response:
+                        self.assertEqual(update_response.status, 200)
+                        logger.info("Set connection status to inactive for testing")
+                    
+                    # Wait for the background task to detect the connection (runs every 30 seconds)
+                    # For testing, we'll wait a bit and then check if the status was updated
+                    logger.info("Waiting for auto-check to detect the active connection...")
+                    await asyncio.sleep(35)  # Wait slightly longer than the 30-second check interval
+                    
+                    # Check if the connection status was updated to active
+                    async with self.session.get(f"{API_URL}/connections/{test_connection_id}") as conn_response:
+                        conn_data = await conn_response.json()
+                        self.assertEqual(conn_data["status"], "active")
+                        logger.info("VNC status auto-check system correctly detected active connection")
                 
-                # Check if the connection status was updated to active
-                async with self.session.get(f"{API_URL}/connections/{self.connection_id}") as conn_response:
-                    conn_data = await conn_response.json()
-                    self.assertEqual(conn_data["status"], "active")
-                    logger.info("VNC status auto-check system correctly detected active connection")
-            
-            except Exception as e:
-                logger.error(f"Error in VNC connection test: {e}")
-                self.fail(f"VNC connection test failed: {e}")
-            
-            finally:
-                if server_socket:
-                    server_socket.close()
+                except Exception as e:
+                    logger.error(f"Error in VNC connection test: {e}")
+                    self.fail(f"VNC connection test failed: {e}")
+                
+                finally:
+                    if server_socket:
+                        server_socket.close()
+                    
+                    # Clean up the test connection
+                    try:
+                        await self.session.delete(f"{API_URL}/connections/{test_connection_id}")
+                        logger.info(f"Cleaned up test connection {test_connection_id}")
+                    except Exception as e:
+                        logger.error(f"Error cleaning up test connection: {e}")
     
     async def test_activity_logs(self):
         """Test activity logging functionality"""
