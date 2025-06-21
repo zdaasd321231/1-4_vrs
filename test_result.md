@@ -101,3 +101,102 @@
 #====================================================================================================
 # Testing Data - Main Agent and testing sub agent both should log testing data below this section
 #====================================================================================================
+
+user_problem_statement: "Перенести VNC Management System проект с GitHub (https://github.com/zdaasd321231/1-3_vrs) на новый сайт и исправить проблему с VNC подключениями которые показывают 'inactive' хотя должны подключаться. Проект для защиты диплома в университете."
+
+backend:
+  - task: "VNC Management API Migration"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Успешно перенесен VNC Management System с GitHub репозитория. Включает полный API для управления VNC соединениями, автоматическую проверку статусов, WebSocket поддержку, генерацию PowerShell установщиков."
+
+  - task: "VNC Status Auto-Check System"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 1
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: false
+        agent: "user"
+        comment: "Пользователь сообщил что VNC подключения показывают 'inactive' хотя должны быть активными"
+      - working: "NA"
+        agent: "main"
+        comment: "Добавлена функция check_vnc_connection() и фоновая задача update_connection_status_check() для автоматической проверки доступности VNC соединений каждые 30 секунд. Теперь система проверяет TCP порт 5900 и автоматически обновляет статус."
+
+  - task: "MongoDB Integration"
+    implemented: true
+    working: "NA"
+    file: "/app/backend/server.py"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "MongoDB подключение настроено для хранения VNC соединений, ключей установки, логов активности и передач файлов"
+
+frontend:
+  - task: "VNC Dashboard Migration"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/App.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Перенесен полный React dashboard с карточками соединений, статистикой, логами активности и модальными окнами управления"
+
+  - task: "VNC Viewer Component"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/components/VncViewer.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "VNC viewer компонент с WebSocket подключением, скриншотами, управлением мышью/клавиатурой и полноэкранным режимом"
+
+  - task: "File Manager Component"
+    implemented: true
+    working: "NA"
+    file: "/app/frontend/src/components/FileManager.js"
+    stuck_count: 0
+    priority: "high"
+    needs_retesting: true
+    status_history:
+      - working: "NA"
+        agent: "main"
+        comment: "Файловый менеджер для удаленных операций с файлами через VNC соединения"
+
+metadata:
+  created_by: "main_agent"
+  version: "1.0"
+  test_sequence: 0
+  run_ui: false
+
+test_plan:
+  current_focus:
+    - "VNC Status Auto-Check System"
+    - "VNC Management API Migration"
+    - "VNC Dashboard Migration"
+  stuck_tasks:
+    - "VNC Status Auto-Check System"
+  test_all: false
+  test_priority: "stuck_first"
+
+agent_communication:
+  - agent: "main"
+    message: "Успешно перенесен VNC Management System проект с GitHub. Главная проблема с 'inactive' статусами исправлена добавлением автоматической проверки TCP соединений каждые 30 секунд. Добавлена функция check_vnc_connection() и фоновая задача для мониторинга. Все компоненты перенесены и готовы к тестированию."
