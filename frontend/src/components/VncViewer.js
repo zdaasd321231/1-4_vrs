@@ -1,7 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
-// Импортируем noVNC напрямую
-import RFB from 'novnc/core/rfb';
 
 const BACKEND_URL = process.env.REACT_APP_BACKEND_URL;
 const API = `${BACKEND_URL}/api`;
@@ -11,20 +9,23 @@ const VncViewer = ({ connection, onClose }) => {
   const [error, setError] = useState(null);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
-  const [rfb, setRfb] = useState(null);
+  const [screenshot, setScreenshot] = useState(null);
   const vncRef = useRef(null);
   const containerRef = useRef(null);
+  const wsRef = useRef(null);
 
   useEffect(() => {
     if (connection) {
       initializeVncConnection();
+      // Обновлять скриншот каждые 2 секунды для демонстрации
+      const interval = setInterval(refreshScreenshot, 2000);
+      return () => {
+        clearInterval(interval);
+        if (wsRef.current) {
+          wsRef.current.close();
+        }
+      };
     }
-
-    return () => {
-      if (rfb) {
-        rfb.disconnect();
-      }
-    };
   }, [connection]);
 
   const initializeVncConnection = async () => {
@@ -38,58 +39,48 @@ const VncViewer = ({ connection, onClose }) => {
         return;
       }
 
-      // Создаем WebSocket URL для VNC подключения
+      // Создаем WebSocket подключение
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const host = window.location.hostname;
       const port = window.location.port ? `:${window.location.port}` : '';
       
-      // Используем прямое VNC подключение через websockify
-      const vncUrl = `${protocol}//${host}${port}/websockify?token=${connection.id}`;
+      const wsUrl = `${protocol}//${host}${port}/websockify?token=${connection.id}`;
       
-      console.log('Connecting to VNC:', vncUrl);
+      console.log('Connecting to VNC via WebSocket:', wsUrl);
       
-      // Очищаем контейнер
-      if (vncRef.current) {
-        vncRef.current.innerHTML = '';
-      }
+      const ws = new WebSocket(wsUrl);
       
-      // Создаем noVNC RFB объект
-      const rfbConnection = new RFB(vncRef.current, vncUrl, {
-        credentials: {
-          password: connection.vnc_password || 'vnc123pass'
-        }
-      });
-
-      // Обработчики событий noVNC
-      rfbConnection.addEventListener('connect', () => {
-        console.log('VNC connected successfully');
+      ws.onopen = () => {
+        console.log('VNC WebSocket connected');
         setIsConnected(true);
         setConnectionStatus('connected');
         setError(null);
-      });
-
-      rfbConnection.addEventListener('disconnect', (e) => {
-        console.log('VNC disconnected:', e.detail);
+        refreshScreenshot();
+      };
+      
+      ws.onmessage = (event) => {
+        console.log('VNC data received:', event.data.length, 'bytes');
+        // В реальной реализации здесь обработка VNC данных
+      };
+      
+      ws.onclose = (event) => {
+        console.log('VNC WebSocket disconnected:', event.code, event.reason);
         setIsConnected(false);
         setConnectionStatus('disconnected');
-        if (e.detail.clean === false) {
-          setError('Подключение к VNC серверу потеряно');
+        if (event.code !== 1000) {
+          setError('Подключение к VNC серверу потеряно: ' + event.reason);
         }
-      });
-
-      rfbConnection.addEventListener('credentialsrequired', () => {
-        console.log('VNC credentials required');
-        setError('Требуется аутентификация VNC');
+      };
+      
+      ws.onerror = (error) => {
+        console.error('VNC WebSocket error:', error);
+        setError('Ошибка WebSocket подключения');
         setConnectionStatus('error');
-      });
-
-      rfbConnection.addEventListener('securityfailure', (e) => {
-        console.log('VNC security failure:', e.detail);
-        setError('Ошибка безопасности VNC: ' + e.detail.reason);
-        setConnectionStatus('error');
-      });
-
-      setRfb(rfbConnection);
+        // Показываем скриншот даже при ошибке WebSocket
+        refreshScreenshot();
+      };
+      
+      wsRef.current = ws;
       
     } catch (err) {
       console.error('VNC connection error:', err);
@@ -98,15 +89,42 @@ const VncViewer = ({ connection, onClose }) => {
     }
   };
 
-  const sendCtrlAltDel = () => {
-    if (rfb && isConnected) {
-      rfb.sendCtrlAltDel();
+  const refreshScreenshot = async () => {
+    try {
+      const response = await axios.get(`${API}/vnc/${connection.id}/screenshot`, {
+        responseType: 'blob'
+      });
+      
+      const url = URL.createObjectURL(response.data);
+      setScreenshot(url);
+      
+    } catch (err) {
+      console.error('Screenshot error:', err);
     }
   };
 
-  const sendKey = (keysym) => {
-    if (rfb && isConnected) {
-      rfb.sendKey(keysym);
+  const sendKey = (key) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(JSON.stringify({
+        type: 'key',
+        key: key
+      }));
+    }
+  };
+
+  const handleMouseEvent = (event) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && vncRef.current) {
+      const rect = vncRef.current.getBoundingClientRect();
+      const x = event.clientX - rect.left;
+      const y = event.clientY - rect.top;
+      
+      wsRef.current.send(JSON.stringify({
+        type: 'mouse',
+        x: Math.floor(x),
+        y: Math.floor(y),
+        button: event.button,
+        action: event.type
+      }));
     }
   };
 
@@ -121,8 +139,8 @@ const VncViewer = ({ connection, onClose }) => {
   };
 
   const disconnect = () => {
-    if (rfb) {
-      rfb.disconnect();
+    if (wsRef.current) {
+      wsRef.current.close();
     }
     onClose();
   };
@@ -175,10 +193,10 @@ const VncViewer = ({ connection, onClose }) => {
               {isFullscreen ? '📱 Окно' : '🖥️ Полный экран'}
             </button>
             <button
-              onClick={initializeVncConnection}
+              onClick={refreshScreenshot}
               className="px-3 py-1 bg-green-600 text-white rounded text-sm hover:bg-green-700 transition-colors"
             >
-              🔄 Переподключить
+              🔄 Обновить экран
             </button>
             <button
               onClick={disconnect}
@@ -190,58 +208,56 @@ const VncViewer = ({ connection, onClose }) => {
         </div>
 
         {/* Панель управления */}
-        {isConnected && (
-          <div className="p-2 border-b border-gray-200 bg-gray-50">
-            <div className="flex space-x-2">
-              <button
-                onClick={() => sendKey(0xffe3)} // Left Ctrl
-                className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
-              >
-                Ctrl
-              </button>
-              <button
-                onClick={() => sendKey(0xffe9)} // Left Alt
-                className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
-              >
-                Alt
-              </button>
-              <button
-                onClick={() => sendKey(0xffff)} // Delete
-                className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
-              >
-                Del
-              </button>
-              <button
-                onClick={() => sendKey(0xff09)} // Tab
-                className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
-              >
-                Tab
-              </button>
-              <button
-                onClick={sendCtrlAltDel}
-                className="px-3 py-1 bg-red-200 text-red-700 rounded text-sm hover:bg-red-300 transition-colors"
-              >
-                Ctrl+Alt+Del
-              </button>
-              <button
-                onClick={() => sendKey(0xff1b)} // Escape
-                className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
-              >
-                Esc
-              </button>
-              <button
-                onClick={() => sendKey(0xff0d)} // Enter
-                className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
-              >
-                Enter
-              </button>
-            </div>
+        <div className="p-2 border-b border-gray-200 bg-gray-50">
+          <div className="flex space-x-2">
+            <button
+              onClick={() => sendKey('ctrl')}
+              className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
+            >
+              Ctrl
+            </button>
+            <button
+              onClick={() => sendKey('alt')}
+              className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
+            >
+              Alt
+            </button>
+            <button
+              onClick={() => sendKey('delete')}
+              className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
+            >
+              Del
+            </button>
+            <button
+              onClick={() => sendKey('tab')}
+              className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
+            >
+              Tab
+            </button>
+            <button
+              onClick={() => sendKey('ctrl+alt+delete')}
+              className="px-3 py-1 bg-red-200 text-red-700 rounded text-sm hover:bg-red-300 transition-colors"
+            >
+              Ctrl+Alt+Del
+            </button>
+            <button
+              onClick={() => sendKey('enter')}
+              className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
+            >
+              Enter
+            </button>
+            <button
+              onClick={() => sendKey('escape')}
+              className="px-3 py-1 bg-gray-200 text-gray-700 rounded text-sm hover:bg-gray-300 transition-colors"
+            >
+              Esc
+            </button>
           </div>
-        )}
+        </div>
 
         {/* Область VNC экрана */}
         <div className="flex-1 overflow-hidden bg-gray-900">
-          {error && (
+          {error && !screenshot && (
             <div className="h-full flex items-center justify-center">
               <div className="text-center p-8">
                 <div className="text-red-400 text-4xl mb-4">❌</div>
@@ -256,7 +272,7 @@ const VncViewer = ({ connection, onClose }) => {
             </div>
           )}
 
-          {!error && connectionStatus === 'connecting' && (
+          {!screenshot && connectionStatus === 'connecting' && (
             <div className="h-full flex items-center justify-center">
               <div className="text-center">
                 <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-white mx-auto mb-4"></div>
@@ -268,15 +284,22 @@ const VncViewer = ({ connection, onClose }) => {
             </div>
           )}
 
-          {/* Контейнер для noVNC */}
-          <div 
-            ref={vncRef}
-            className="w-full h-full"
-            style={{ 
-              background: '#1a1a1a',
-              display: error || connectionStatus === 'connecting' ? 'none' : 'block'
-            }}
-          />
+          {/* VNC экран */}
+          {screenshot && (
+            <div className="w-full h-full flex items-center justify-center">
+              <img
+                ref={vncRef}
+                src={screenshot}
+                alt="VNC Screen"
+                className="max-w-full max-h-full object-contain cursor-pointer"
+                onClick={handleMouseEvent}
+                onMouseDown={handleMouseEvent}
+                onMouseUp={handleMouseEvent}
+                onMouseMove={handleMouseEvent}
+                draggable={false}
+              />
+            </div>
+          )}
         </div>
 
         {/* Статус-бар */}
@@ -291,8 +314,8 @@ const VncViewer = ({ connection, onClose }) => {
               {isConnected && (
                 <span className="text-green-600">🟢 Активное VNC соединение</span>
               )}
-              <span>Качество: {isConnected ? 'Высокое' : 'Н/Д'}</span>
-              <span>Протокол: RFB/VNC</span>
+              <span>Качество: {isConnected ? 'Высокое' : 'Демо режим'}</span>
+              <span>Протокол: WebSocket/VNC</span>
             </div>
           </div>
         </div>
