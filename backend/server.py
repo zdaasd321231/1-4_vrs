@@ -198,6 +198,55 @@ async def log_activity(connection_id: str, action: str, details: str, ip_address
     )
     await db.activity_logs.insert_one(log_entry.dict())
 
+async def check_vnc_connection(ip_address: str, port: int = 5900, timeout: float = 3.0):
+    """Проверить доступность VNC соединения"""
+    if not ip_address:
+        return False
+    
+    try:
+        # Создаем сокет соединение для проверки порта
+        reader, writer = await asyncio.wait_for(
+            asyncio.open_connection(ip_address, port),
+            timeout=timeout
+        )
+        writer.close()
+        await writer.wait_closed()
+        return True
+    except (asyncio.TimeoutError, ConnectionRefusedError, OSError):
+        return False
+
+async def update_connection_status_check():
+    """Периодическая проверка статусов VNC соединений"""
+    while True:
+        try:
+            # Получить все соединения с IP адресами
+            connections = await db.vnc_connections.find({"ip_address": {"$ne": None}}).to_list(1000)
+            
+            for connection in connections:
+                if connection["ip_address"]:
+                    is_accessible = await check_vnc_connection(connection["ip_address"], connection["vnc_port"])
+                    new_status = "active" if is_accessible else "inactive"
+                    
+                    # Обновить статус если изменился
+                    if connection["status"] != new_status:
+                        await db.vnc_connections.update_one(
+                            {"id": connection["id"]},
+                            {"$set": {"status": new_status, "last_seen": datetime.utcnow()}}
+                        )
+                        await log_activity(
+                            connection["id"], 
+                            "status_auto_update", 
+                            f"Статус автоматически изменен на {new_status}"
+                        )
+                        logger.info(f"Connection {connection['id']} status changed to {new_status}")
+            
+            # Проверять каждые 30 секунд
+            await asyncio.sleep(30) 
+            
+        except Exception as e:
+            logger.error(f"Error in status check: {e}")
+            await asyncio.sleep(60)  # Если ошибка, ждем дольше
+
 # ================== API ROUTES ==================
 
 # Basic routes
