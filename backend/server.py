@@ -355,11 +355,7 @@ async def check_vnc_connection(ip_address: str, port: int = 5900, timeout: float
     if not ip_address:
         return False
     
-    # В демо режиме симулируем активные соединения для половины машин
-    if DEMO_MODE:
-        import random
-        random.seed(ip_address)  # Стабильный результат для одного IP
-        return random.choice([True, True, False])  # 66% шанс быть активным
+    # Проверяем реальное соединение
     
     try:
         # Создаем сокет соединение для проверки порта
